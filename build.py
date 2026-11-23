@@ -180,33 +180,31 @@ def main() -> None:
         bill = max(0, calc_bill(250 + kwh, NOW.month) - base_250)
         apps[a["slug"]] = {**a, "w_mid": w, "kwh": kwh, "bill": bill}
 
-    # High-buyer-intent appliance VS pairs (24 pairs!)
-    app_pairs = [
-        ("jeongiyo", "onsu-mat"),
-        ("jeongiyo", "tanso-mat"),
-        ("onsu-mat", "tanso-mat"),
-        ("jeongiyo", "jeongi-heater"),
-        ("onsu-mat", "jeongi-heater"),
-        ("tanso-mat", "jeongi-heater"),
-        ("jeongi-heater", "radiator"),
-        ("jeongi-heater", "onpunggi"),
-        ("radiator", "onpunggi"),
-        ("onsu-mat", "radiator"),
-        ("aircon-wall", "aircon-stand"),
-        ("aircon-wall", "idongsik-aircon"),
-        ("aircon-stand", "idongsik-aircon"),
-        ("seonpunggi", "circulator"),
-        ("aircon-wall", "jeseupgi"),
-        ("jeseupgi", "geonjogi"),
-        ("gaseupgi", "gonggi-cheongjeonggi"),
-        ("air-fryer", "jeonja-range"),
-        ("air-fryer", "induction"),
-        ("induction", "jeonja-range"),
-        ("jeongi-pot", "jeonja-range"),
-        ("siksegi", "setakgi"),
-        ("geonjogi", "setakgi"),
-        ("desktop-pc", "tv"),
+    # High-buyer-intent appliance VS pairs (all within-category + popular cross-category pairs -> ~60 pairs!)
+    by_cat: dict[str, list[str]] = {}
+    for slug, a in apps.items():
+        by_cat.setdefault(a["cat"], []).append(slug)
+    pair_set: list[tuple[str, str]] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    for cat_slugs in by_cat.values():
+        for s1, s2 in itertools.combinations(cat_slugs, 2):
+            pair_set.append((s1, s2))
+            seen_pairs.add((s1, s2))
+            seen_pairs.add((s2, s1))
+    extra_cross = [
+        ("jeongiyo", "aircon-wall"), ("onsu-mat", "aircon-wall"), ("jeongi-heater", "aircon-stand"),
+        ("jeseupgi", "geonjogi"), ("jeseupgi", "setakgi"), ("gaseupgi", "jeseupgi"),
+        ("gaseupgi", "jeongiyo"), ("gaseupgi", "onsu-mat"), ("air-fryer", "siksegi"),
+        ("induction", "siksegi"), ("induction", "geonjogi"), ("desktop-pc", "aircon-wall"),
+        ("desktop-pc", "jeongi-heater"), ("desktop-pc", "jeongiyo"), ("hair-dryer", "jeongi-pot"),
+        ("hair-dryer", "jeonja-range"), ("tv", "gonggi-cheongjeonggi"), ("seonpunggi", "gonggi-cheongjeonggi"),
+        ("aircon-wall", "geonjogi"), ("idongsik-aircon", "jeseupgi"), ("radiator", "aircon-stand"),
     ]
+    for s1, s2 in extra_cross:
+        if (s1, s2) not in seen_pairs and s1 in apps and s2 in apps:
+            pair_set.append((s1, s2))
+            seen_pairs.add((s1, s2))
+    app_pairs = pair_set
 
     urls: list[str] = []
     app_tiles: list[str] = []
@@ -303,61 +301,66 @@ def main() -> None:
 
     groc_tiles: list[str] = []
     for cls, g_list in sorted(by_cls.items(), key=lambda kv: -len(kv[1])):
-        if len(g_list) < 2 or len(groc_tiles) >= 22:
+        if len(g_list) < 2 or len(groc_tiles) >= 65:
             continue
         g_sorted = sorted(g_list, key=lambda x: -x["n"])
-        g1, g2 = g_sorted[0], g_sorted[1]
-        cheaper = g1 if g1["cur"] <= g2["cur"] else g2
-        diff = abs(g1["cur"] - g2["cur"])
-        rel = f"vs/g-{g1['id']}-vs-{g2['id']}.html"
-        title = f"{g1['name']} vs {g2['name']} 가격 비교 ({cls}) — 평균가·최저가 어디가 더 쌀까?"
-        desc = f"한국소비자원 전국 매장 실측 기준 {g1['name']}(평균 {won(g1['cur'])}, 최저 {won(g1['min'])})과 {g2['name']}(평균 {won(g2['cur'])}, 최저 {won(g2['min'])}) 가격을 1:1 비교합니다."
-        faqs = [
-            (
-                f"{g1['name']}과 {g2['name']} 중 전국 평균가가 더 저렴한 제품은?",
-                f"{cheaper['name']}이(가) 평균 {won(cheaper['cur'])}(최저 {won(cheaper['min'])})으로 약 {won(diff)} 더 저렴합니다.",
+        sub_pairs = [(g_sorted[0], g_sorted[1])]
+        if len(g_sorted) >= 3:
+            sub_pairs.append((g_sorted[0], g_sorted[2]))
+        for g1, g2 in sub_pairs:
+            if len(groc_tiles) >= 65:
+                break
+            cheaper = g1 if g1["cur"] <= g2["cur"] else g2
+            diff = abs(g1["cur"] - g2["cur"])
+            rel = f"vs/g-{g1['id']}-vs-{g2['id']}.html"
+            title = f"{g1['name']} vs {g2['name']} 가격 비교 ({cls}) — 평균가·최저가 어디가 더 쌀까?"
+            desc = f"한국소비자원 전국 매장 실측 기준 {g1['name']}(평균 {won(g1['cur'])}, 최저 {won(g1['min'])})과 {g2['name']}(평균 {won(g2['cur'])}, 최저 {won(g2['min'])}) 가격을 1:1 비교합니다."
+            faqs = [
+                (
+                    f"{g1['name']}과 {g2['name']} 중 전국 평균가가 더 저렴한 제품은?",
+                    f"{cheaper['name']}이(가) 평균 {won(cheaper['cur'])}(최저 {won(cheaper['min'])})으로 약 {won(diff)} 더 저렴합니다.",
+                )
+            ]
+            body = f"""
+            <section class="card">
+              <span class="badge">한국소비자원 전국 매장 실측 · {esc(cls)}</span>
+              <h1>{esc(g1['name'])} vs {esc(g2['name'])} 가격 1:1 비교</h1>
+              <p class="sub">전국 마트·슈퍼·편의점 실제 판매가 기준 두 인기 {esc(cls)} 제품의 평균가와 최저가를 비교했습니다.</p>
+              <div class="vs-grid">
+                <div class="box {'win' if cheaper is g1 else ''}">
+                  <span class="badge">{'🛒 가성비 우위' if cheaper is g1 else '비교 제품 A'}</span>
+                  <h2>{esc(g1['name'])}</h2>
+                  <div class="big">평균 {won(g1['cur'])}</div>
+                  <div class="sub">전국 최저 {won(g1['min'])} ~ 최고 {won(g1['max'])} ({g1['n']}개 매장)</div>
+                </div>
+                <div class="box {'win' if cheaper is g2 else ''}">
+                  <span class="badge">{'🛒 가성비 우위' if cheaper is g2 else '비교 제품 B'}</span>
+                  <h2>{esc(g2['name'])}</h2>
+                  <div class="big">평균 {won(g2['cur'])}</div>
+                  <div class="sub">전국 최저 {won(g2['min'])} ~ 최고 {won(g2['max'])} ({g2['n']}개 매장)</div>
+                </div>
+              </div>
+            </section>
+            {COUPANG_BOX}
+            <section class="card">
+              <h2>전국 매장 가격 상세 비교표</h2>
+              <table>
+                <thead><tr><th>항목</th><th>{esc(g1['name'])}</th><th>{esc(g2['name'])}</th></tr></thead>
+                <tbody>
+                  <tr><td>전국 평균 판매가</td><td><strong>{won(g1['cur'])}</strong></td><td><strong>{won(g2['cur'])}</strong></td></tr>
+                  <tr><td>전국 최저 매장가</td><td style="color:var(--accent)">{won(g1['min'])}</td><td style="color:var(--accent)">{won(g2['min'])}</td></tr>
+                  <tr><td>전국 최고 매장가</td><td>{won(g1['max'])}</td><td>{won(g2['max'])}</td></tr>
+                  <tr><td>매장 간 최대 가격차</td><td>{won(g1['max']-g1['min'])}</td><td>{won(g2['max']-g2['min'])}</td></tr>
+                </tbody>
+              </table>
+              <p class="sub" style="margin-top:14px">👉 주간 가격 변동 그래프: <a href="https://0520goeus.github.io/price-note/p/{g1['id']}.html" style="color:var(--accent)">{esc(g1['name'])}</a> · <a href="https://0520goeus.github.io/price-note/p/{g2['id']}.html" style="color:var(--accent)">{esc(g2['name'])}</a></p>
+            </section>
+            """
+            urls.append(write_page(rel, title, desc, body, faqs))
+            groc_tiles.append(
+                f'<a class="tile" href="{SITE_URL}/{rel}"><b>{esc(g1["name"][:14])} vs {esc(g2["name"][:14])}</b>'
+                f'<small>{esc(cls)} · 평균 {won(diff)} 차이 →</small></a>'
             )
-        ]
-        body = f"""
-        <section class="card">
-          <span class="badge">한국소비자원 전국 매장 실측 · {esc(cls)}</span>
-          <h1>{esc(g1['name'])} vs {esc(g2['name'])} 가격 1:1 비교</h1>
-          <p class="sub">전국 마트·슈퍼·편의점 실제 판매가 기준 두 인기 {esc(cls)} 제품의 평균가와 최저가를 비교했습니다.</p>
-          <div class="vs-grid">
-            <div class="box {'win' if cheaper is g1 else ''}">
-              <span class="badge">{'🛒 가성비 우위' if cheaper is g1 else '비교 제품 A'}</span>
-              <h2>{esc(g1['name'])}</h2>
-              <div class="big">평균 {won(g1['cur'])}</div>
-              <div class="sub">전국 최저 {won(g1['min'])} ~ 최고 {won(g1['max'])} ({g1['n']}개 매장)</div>
-            </div>
-            <div class="box {'win' if cheaper is g2 else ''}">
-              <span class="badge">{'🛒 가성비 우위' if cheaper is g2 else '비교 제품 B'}</span>
-              <h2>{esc(g2['name'])}</h2>
-              <div class="big">평균 {won(g2['cur'])}</div>
-              <div class="sub">전국 최저 {won(g2['min'])} ~ 최고 {won(g2['max'])} ({g2['n']}개 매장)</div>
-            </div>
-          </div>
-        </section>
-        {COUPANG_BOX}
-        <section class="card">
-          <h2>전국 매장 가격 상세 비교표</h2>
-          <table>
-            <thead><tr><th>항목</th><th>{esc(g1['name'])}</th><th>{esc(g2['name'])}</th></tr></thead>
-            <tbody>
-              <tr><td>전국 평균 판매가</td><td><strong>{won(g1['cur'])}</strong></td><td><strong>{won(g2['cur'])}</strong></td></tr>
-              <tr><td>전국 최저 매장가</td><td style="color:var(--accent)">{won(g1['min'])}</td><td style="color:var(--accent)">{won(g2['min'])}</td></tr>
-              <tr><td>전국 최고 매장가</td><td>{won(g1['max'])}</td><td>{won(g2['max'])}</td></tr>
-              <tr><td>매장 간 최대 가격차</td><td>{won(g1['max']-g1['min'])}</td><td>{won(g2['max']-g2['min'])}</td></tr>
-            </tbody>
-          </table>
-          <p class="sub" style="margin-top:14px">👉 주간 가격 변동 그래프: <a href="https://0520goeus.github.io/price-note/p/{g1['id']}.html" style="color:var(--accent)">{esc(g1['name'])}</a> · <a href="https://0520goeus.github.io/price-note/p/{g2['id']}.html" style="color:var(--accent)">{esc(g2['name'])}</a></p>
-        </section>
-        """
-        urls.append(write_page(rel, title, desc, body, faqs))
-        groc_tiles.append(
-            f'<a class="tile" href="{SITE_URL}/{rel}"><b>{esc(g1["name"][:14])} vs {esc(g2["name"][:14])}</b>'
-            f'<small>{esc(cls)} · 평균 {won(diff)} 차이 →</small></a>'
-        )
 
     # Homepage
     home_body = f"""
